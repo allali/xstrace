@@ -165,6 +165,7 @@
         fileReader.onload = function (e) {
             var text = e.target.result;
 	    $("#tracefile").hide();
+	    $("#intro").hide();
 	    // parsing strace file....
 	    line_re = RegExp("([^\\(]*)\\((.*)\\)\\ +=\\ (.*)$");
 	    var lines=text.split('\n'),i;
@@ -206,7 +207,18 @@
 });
 </script>
 </head>
-<body>
+  <body>
+    <div id="intro">
+    <h1> xstrace </h1>
+    <p> xstrace allows you to visualise syscall of a process graphically, it can be usefull for understanding
+      syscall and debugging small programs.</p>
+    <p> This tools only deals with a limited number of processus (ie. 4). </p>
+    <p> Not all syscall are dealed (ie. graphically represented). This can lead to wrong/confusing/buggy graphical representation. </p>
+    <p> To use this tool, juste upload a trace generated using <code>strace -f -o trace.log ./a.out</code> </p>
+    <p> No data is transfert to a webserver: javascript will parse the log file and create visual, all in your browser </p>
+    <p> fill free to submit improvements and/or to fork : this code is under beerware licence (see LICENCE file) :)</p>
+    </div>
+    
   <input id="tracefile" type="file">
   
   <object id="SVG" data="xstrace.svg" type="image/svg+xml" style="display:none;"></object>
