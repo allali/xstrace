@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+  <head>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
+<script>
+  var traces=[];
+  var process={}
+  var current=0;
+
+  var pending_cb=[];
+
+  function create_line(id,x1,y1,x2,y2){
+      var newLine = document.createElementNS('http://www.w3.org/2000/svg','line');
+      newLine.setAttribute('id',id);
+      newLine.setAttribute('x1',x1);
+      newLine.setAttribute('y1',y1);
+      newLine.setAttribute('x2',x2);
+      newLine.setAttribute('y2',y2);
+      newLine.setAttribute('stroke',"black");
+      return newLine;
+  }
+  
+  function get(id){
+      return $("#SVG")[0].contentDocument.getElementById(id);
+  }
+
+  
+  function exec_sc(trace,prefix){
+      console.log("exec cb: ",trace);
+      // update binary
+      var bin=trace['raw'].split('"')[1];
+      get(prefix+"_BIN").innerHTML=bin;      
+  }
+
+  function open_sc(trace,prefix){
+      var fd=trace['return'];
+      get(prefix+"_FD"+fd).style.fill="blue";
+      // add line
+      var f=get(prefix+"_FD"+fd).getBBox();
+      var t=get(prefix+"_FD"+fd+"D").getBBox();
+      var l=create_line(prefix+"fdl"+fd,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
+//      l.style.stroke="black";
+      $("#SVG")[0].contentDocument.documentElement.append(l);
+      // find free slote in file system:
+      var i=0;
+      while(i<=16 && get('K_F'+i).innerHTML!='') ++i;
+      var fn=trace['raw'].split(',')[1];
+      get('K_F'+i).innerHTML=fn;
+      var g=get('K_F'+i).getBBox();
+      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+fd,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/2));
+      // TODO: add position and rights in second column
+  }
+
+  
+  function close_cb(trace,prefix){
+      get(prefix+'_FD'+trace['args']).style.fill="none";
+      // remove lines
+      var x=get(prefix+'fdl'+trace['args']);
+      if (x!==null) x.remove();
+      x=get(prefix+'fdll'+trace['args']);
+      if (x!==null) x.remove();
+  }
+
+  function readwrite_cb(trace,prefix){
+      var x=get(prefix+"_FD"+trace['args'].split(',')[0]);
+      x.style.stroke="red";
+      pending_cb.push(function(){
+	  x.style.stroke="black";
+      });
+  }
+  
+  var sc_callback={'execve':exec_sc,'openat':open_sc,'close':close_cb,'read':readwrite_cb,'write':readwrite_cb};
+
+  function next_trace(){
+      console.log("next trace");
+      pending_cb.forEach(function(cb){cb();});
+      pending_cb=[];
+      if (current>=traces.length) return;
+      console.log(traces[current]);
+      var trace=traces[current];
+      if (!(trace['pid'] in process)){ // this is a new process
+	  process[trace['pid']]=new Object();
+	  process[trace['pid']].id=Object.keys(process).length-1;
+	  // set pid
+	  get("P"+process[trace['pid']].id+"_PID").innerHTML=trace['pid'];
+      }
+      var prefix="P"+process[trace['pid']].id;
+      // update current sys call
+      var csc=get(prefix+"_CURRENT_SC");
+
+      // show current process as the active one:
+      get(prefix+"_BOX").style.stroke='red';
+      pending_cb.push(function(){
+	  get(prefix+"_BOX").style.stroke="black";
+      });
+      
+      csc.innerHTML=trace['raw'].substr(0,30);
+      get("CURRENT_TRACE").innerHTML=trace['raw'];
+      if (trace['error']===null)
+	  csc.style.fill='green';
+      else
+	  csc.style.fill='red';
+      
+      pending_cb.push(function(){ // remove text from current sc and add it to last sc
+	  console.log("cb...");
+	  var txt=csc.innerHTML;
+	  for(var i=9;i>0;--i){
+	      var a=get(prefix+"_LAST_SC"+i), b=get(prefix+"_LAST_SC"+(i-1));
+	      a.innerHTML=b.innerHTML;
+	      a.style.fill=b.style.fill;	      
+	  }
+	  var a=get(prefix+"_LAST_SC0");
+	  a.innerHTML=txt;
+	  a.style.fill=csc.style.fill;
+	  csc.innerHTML="";
+	  // get the position of a text box: t.children[0].getExtentOfChar(0)
+	  // 
+      });
+
+      if (trace['error']===null){
+	  if (trace['sc'] in sc_callback)  sc_callback[trace['sc']](trace,prefix);
+      }
+      
+      current+=1;
+  }
+
+  function next_trace_ok(){
+      next_trace();
+      while ((current<traces.length) && (traces[current-1]['error']!==null)) next_trace();
+      console.log(traces[current]);
+  }
+
+  function init_trace(){
+      console.log("init trace");
+      get('P1').style.display="none";
+      for(var i=0;i<=16;++i)
+	  get('K_F'+i).innerHTML='';
+      // hide all process except P0
+      for(var i=0;i<10;++i)
+	  get('P0_LAST_SC'+i).innerHTML='';
+      next_trace(); // load first trace
+  }
+
+
+  
+  $(document).ready(function () {
+
+      $("body").keydown(function(e){
+	  if (e.keyCode==39){
+	      next_trace();
+	  }
+      });
+
+      
+    $('[type=file]').change(function () {
+	if (!("files" in this)) {
+            alert("File reading not supported in this browser");
+        }
+        var file = this.files && this.files[0];
+        if (!file) {
+            return;
+        }
+        var fileReader = new FileReader();
+	
+        fileReader.onload = function (e) {
+            var text = e.target.result;
+	    $("#tracefile").hide();
+	    // parsing strace file....
+	    line_re = RegExp("([^\\(]*)\\((.*)\\)\\ +=\\ (.*)$");
+	    var lines=text.split('\n'),i;
+	    for(i=0;i<lines.length;++i){
+		var x=lines[i].indexOf(' ')
+		if (x==-1) continue;
+		pid=lines[i].substr(0,x);
+		var raw=lines[i].substr(x+1)
+		m=line_re.exec(raw);
+		if (m=== null || m.length!=4){ console.log("skip:",m);}
+		else {
+		    var sc=m[1];
+		    var args=m[2];
+		    var rets=m[3];
+		    var ret=rets,e=null;
+		    var x=rets.indexOf(' ');
+		    if (x!=-1) {
+			ret=rets.substr(0,x);
+			e=rets.substr(x+1);
+		    }
+		    console.log(m);
+		    console.log(pid,sc,raw,"return:",ret,"error:",e);
+		    traces.push({'pid':pid,'sc':sc,'raw':raw,'return':ret,'error':e,'args':args});
+		}
+	    }
+	    console.log(traces);
+
+	    $("#SVG").show({complete : function(){
+		// From now, SVG is load, we can work on it....
+		console.log($("#SVG")[0].contentDocument);
+		$("#SVG")[0].contentDocument.getElementById('next').onclick=next_trace;
+		$("#SVG")[0].contentDocument.getElementById('next_ok').onclick=next_trace_ok;
+		init_trace();
+	    }});
+        };
+	
+        fileReader.readAsText(this.files[0]);
+    });
+});
+</script>
+</head>
+<body>
+  <input id="tracefile" type="file">
+  
+  <object id="SVG" data="xstrace.svg" type="image/svg+xml" style="display:none;"></object>
+
+</body>
+</html>
