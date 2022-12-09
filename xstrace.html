@@ -1,6 +1,21 @@
 <!DOCTYPE html>
 <html>
   <head>
+    <style>
+      #SVG{
+	  width: 100%;
+	  height: 100%;
+      }
+      
+      #SVGdiv {
+	  position: absolute;
+	  top: 0;
+	  left: 0;
+	  right: 0;
+	  bottom: 0;
+      }
+    </style>
+      
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
 <script>
   var traces=[];
@@ -33,7 +48,7 @@
   }
 
   function open_sc(trace,prefix){
-      var fd=trace['return'];
+      var fd=trace['return']; 
       get(prefix+"_FD"+fd).style.fill="blue";
       // add line
       var f=get(prefix+"_FD"+fd).getBBox();
@@ -44,16 +59,23 @@
       // find free slote in file system:
       var i=0;
       while(i<=16 && get('K_F'+i).innerHTML!='') ++i;
-      var fn=trace['raw'].split(',')[1];
+      var fn=trace['raw'].split(',')[1]; // the filename
       get('K_F'+i).innerHTML=fn;
       var g=get('K_F'+i).getBBox();
       $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+fd,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/2));
       // TODO: add position and rights in second column
+      var r='';
+      if (trace['raw'].includes("O_RDWR")) r='RW';
+      else if (trace['raw'].includes("O_RDONLY")) r='R';
+      else if (trace['raw'].includes("O_WRONLY")) r='W';
+      r=r+'/'+0; // 0 is the position in file
+      get(prefix+"_FD"+fd+"DT").innerHTML=r;
   }
 
   
   function close_cb(trace,prefix){
       get(prefix+'_FD'+trace['args']).style.fill="none";
+      get(prefix+'_FD'+trace['args']+'DT').innerHTML='';
       // remove lines
       var x=get(prefix+'fdl'+trace['args']);
       if (x!==null) x.remove();
@@ -62,14 +84,25 @@
   }
 
   function readwrite_cb(trace,prefix){
-      var x=get(prefix+"_FD"+trace['args'].split(',')[0]);
-      x.style.stroke="red";
+      var col="red";
+      if (trace['sc'].includes('read'))  col="green";
+      var fd=trace['args'].split(',')[0];
+      var x=get(prefix+"_FD"+fd);      
+      var l1=get(prefix+'fdl'+fd);
+      var l2=get(prefix+'fdll'+fd);
+      x.style.stroke=col;
+      x.style.fill=col;
+      if (l1) l1.style.stroke=col;
+      if (l2) l2.style.stroke=col;
       pending_cb.push(function(){
 	  x.style.stroke="black";
+	  x.style.fill="blue";
+	  if (l1) l1.style.stroke="black";
+	  if (l2) l2.style.stroke="black";	  
       });
   }
   
-  var sc_callback={'execve':exec_sc,'openat':open_sc,'close':close_cb,'read':readwrite_cb,'write':readwrite_cb};
+  var sc_callback={'execve':exec_sc,'openat':open_sc,'close':close_cb,'read':readwrite_cb,'pread64':readwrite_cb,'write':readwrite_cb};
 
   function next_trace(){
       console.log("next trace");
@@ -132,12 +165,18 @@
 
   function init_trace(){
       console.log("init trace");
-      get('P1').style.display="none";
+      // Hide kernel stuff:
       for(var i=0;i<=16;++i)
-	  get('K_F'+i).innerHTML='';
-      // hide all process except P0
-      for(var i=0;i<10;++i)
-	  get('P0_LAST_SC'+i).innerHTML='';
+	  get('K_F'+i).innerHTML=''; // open files
+      // TODO: hide all process except P0
+      get('P1').style.display="none";
+      // for each process, hide text
+      for(var p=0;p<1;p++){
+	  for(var i=0;i<10;++i)
+	      get('P'+p+'_LAST_SC'+i).innerHTML='';
+	  for(var i=0;i<13;++i)
+	      get('P'+p+'_FD'+i+'DT').innerHTML='';
+      }
       next_trace(); // load first trace
   }
 
@@ -195,9 +234,9 @@
 
 	    $("#SVG").show({complete : function(){
 		// From now, SVG is load, we can work on it....
-		console.log($("#SVG")[0].contentDocument);
 		$("#SVG")[0].contentDocument.getElementById('next').onclick=next_trace;
 		$("#SVG")[0].contentDocument.getElementById('next_ok').onclick=next_trace_ok;
+		$("#SVG")[0]
 		init_trace();
 	    }});
         };
@@ -221,7 +260,9 @@
     
   <input id="tracefile" type="file">
   
-  <object id="SVG" data="xstrace.svg" type="image/svg+xml" style="display:none;"></object>
+  <div class="SVGdiv">
+    <object id="SVG" data="xstrace.svg" type="image/svg+xml" style="display:none;"></object>
+  </div>
 
 </body>
 </html>
