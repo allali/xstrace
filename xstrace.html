@@ -101,8 +101,21 @@
 	  if (l2) l2.style.stroke="black";	  
       });
   }
+
+  function dup_cb(trace,prefix){
+      console.log("dup sc : ");
+      console.log(trace);
+      var src=trace['args'];
+      var dst=trace['return'];
+      // draw a line drom dst fdd to src fdd
+      get(prefix+"_FD"+dst).style.fill="blue";   
+      var f=get(prefix+"_FD"+dst).getBBox();   
+      var t=get(prefix+"_FD"+src+"D").getBBox();
+      var l=create_line(prefix+"fdl"+dst,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
+      $("#SVG")[0].contentDocument.documentElement.append(l);
+  }
   
-  var sc_callback={'execve':exec_sc,'openat':open_sc,'close':close_cb,'read':readwrite_cb,'pread64':readwrite_cb,'write':readwrite_cb};
+  var sc_callback={'execve':exec_sc,'openat':open_sc,'close':close_cb,'read':readwrite_cb,'pread64':readwrite_cb,'write':readwrite_cb,'dup':dup_cb};
 
   function next_trace(){
       console.log("next trace");
@@ -170,23 +183,41 @@
 	  get('K_F'+i).innerHTML=''; // open files
       // TODO: hide all process except P0
       get('P1').style.display="none";
-      // for each process, hide text
+      // for each process, hide text, add fd012 lines
       for(var p=0;p<1;p++){
 	  for(var i=0;i<10;++i)
 	      get('P'+p+'_LAST_SC'+i).innerHTML='';
 	  for(var i=0;i<13;++i)
 	      get('P'+p+'_FD'+i+'DT').innerHTML='';
+	  for(var i=0;i<3;++i){
+	      var f=get('P'+p+"_FD"+i).getBBox();
+	      var t=get('P'+p+"_FD"+i+'D').getBBox();
+	      var l=create_line('P'+p+"fdl"+i,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
+	      $("#SVG")[0].contentDocument.documentElement.append(l);	  
+	  }
+	  get('P'+p+"_FD"+0+"DT").innerHTML="R/0 (?)";
+	  get('P'+p+"_FD"+1+"DT").innerHTML="W/0 (?)";
+	  get('P'+p+"_FD"+2+"DT").innerHTML="W/0 (?)";
       }
       next_trace(); // load first trace
   }
-
+  
+  function next_trace_init(){
+      while((current<traces.length)
+	    && (traces[current-1]['sc']!="prlimit64")
+	    && (traces[current-1]['args'].includes("RLIMIT_STACK")==false)){
+	  next_trace();
+      }
+  }
 
   
   $(document).ready(function () {
 
       $("body").keydown(function(e){
-	  if (e.keyCode==39){
+	  if ((e.keyCode==39) || (e.keyCode==32)){
 	      next_trace();
+	  } else if (e.keyCode==34) {
+	      next_trace_ok();
 	  }
       });
 
@@ -236,7 +267,7 @@
 		// From now, SVG is load, we can work on it....
 		$("#SVG")[0].contentDocument.getElementById('next').onclick=next_trace;
 		$("#SVG")[0].contentDocument.getElementById('next_ok').onclick=next_trace_ok;
-		$("#SVG")[0]
+		$("#SVG")[0].contentDocument.getElementById('BUTTON_START').onclick=next_trace_init;
 		init_trace();
 	    }});
         };
