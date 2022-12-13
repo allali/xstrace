@@ -84,6 +84,7 @@
   }
 
   function readwrite_cb(trace,prefix){
+      // TODO: update fd offset value
       var col="red";
       if (trace['sc'].includes('read'))  col="green";
       var fd=trace['args'].split(',')[0];
@@ -115,7 +116,68 @@
       $("#SVG")[0].contentDocument.documentElement.append(l);
   }
   
-  var sc_callback={'execve':exec_sc,'openat':open_sc,'close':close_cb,'read':readwrite_cb,'pread64':readwrite_cb,'write':readwrite_cb,'dup':dup_cb};
+  function dup2_cb(trace,prefix){
+      console.log("dup2 sc : ");
+
+      var src=trace['args'].split(",")[0].trim();
+      var dst=trace['args'].split(",")[1].trim();
+      // first reset dst         
+      var l=get(prefix+'fdl'+dst);
+      if (l!==null)  l.remove();
+      l=get(prefix+'fdll'+dst);
+      if (l!==null)  l.remove();
+      // draw a line drom dst fdd to src fdd
+      get(prefix+"_FD"+dst).style.fill="blue";   
+      var f=get(prefix+"_FD"+dst).getBBox();   
+      var t=get(prefix+"_FD"+src+"D").getBBox();
+      var l=create_line(prefix+"fdl"+dst,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
+      $("#SVG")[0].contentDocument.documentElement.append(l);
+  }
+
+  function pipe_cb(trace,prefix){
+      var p=trace['args'].split(',');
+      var pin=p[0].substring(1);
+      var pout=p[1].substring(0,p[1].length-1);
+      console.log(pin,pout);
+      get(prefix+"_FD"+pin).style.fill="blue";
+      get(prefix+"_FD"+pout).style.fill="blue";
+      // add line
+      var f=get(prefix+"_FD"+pin).getBBox();
+      var t=get(prefix+"_FD"+pin+"D").getBBox();
+      var l=create_line(prefix+"fdl"+pin,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
+      $("#SVG")[0].contentDocument.documentElement.append(l);;
+      // add line
+      var f=get(prefix+"_FD"+pout).getBBox();
+      var t=get(prefix+"_FD"+pout+"D").getBBox();
+      var l=create_line(prefix+"fdl"+pout,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
+      $("#SVG")[0].contentDocument.documentElement.append(l);
+      // find free slote in file system:
+      var i=0;
+      while(i<=16 && get('K_F'+i).innerHTML!='') ++i;
+      var fn=trace['raw'].split(',')[1]; // the filename
+      get('K_F'+i).innerHTML=fn;
+      var g=get('K_F'+i).getBBox();
+      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+fd,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/2));
+      // TODO: add position and rights in second column
+      var r='';
+      if (trace['raw'].includes("O_RDWR")) r='RW';
+      else if (trace['raw'].includes("O_RDONLY")) r='R';
+      else if (trace['raw'].includes("O_WRONLY")) r='W';
+      r=r+'/ - '; // no offset for pipe
+      get(prefix+"_FD"+fd+"DT").innerHTML=r;
+      
+  }
+  
+  
+  var sc_callback={'execve':exec_sc,
+		   'openat':open_sc,
+		   'close':close_cb,
+		   'read':readwrite_cb,
+		   'pread64':readwrite_cb,
+		   'write':readwrite_cb,
+		   'dup':dup_cb,
+		   'dup2':dup2_cb,
+		   'pipe2':pipe_cb};
 
   function next_trace(){
       console.log("next trace");
@@ -210,30 +272,8 @@
       }
   }
 
-  
-  $(document).ready(function () {
 
-      $("body").keydown(function(e){
-	  if ((e.keyCode==39) || (e.keyCode==32)){
-	      next_trace();
-	  } else if (e.keyCode==34) {
-	      next_trace_ok();
-	  }
-      });
-
-      
-    $('[type=file]').change(function () {
-	if (!("files" in this)) {
-            alert("File reading not supported in this browser");
-        }
-        var file = this.files && this.files[0];
-        if (!file) {
-            return;
-        }
-        var fileReader = new FileReader();
-	
-        fileReader.onload = function (e) {
-            var text = e.target.result;
+  	function load_strace(text){	    
 	    $("#tracefile").hide();
 	    $("#intro").hide();
 	    // parsing strace file....
@@ -270,6 +310,37 @@
 		$("#SVG")[0].contentDocument.getElementById('BUTTON_START').onclick=next_trace_init;
 		init_trace();
 	    }});
+	}
+  
+  
+  $(document).ready(function () {
+
+      $("body").keydown(function(e){
+	  if ((e.keyCode==39) || (e.keyCode==32)){
+	      next_trace();
+	  } else if (e.keyCode==34) {
+	      next_trace_ok();
+	  }
+      });
+
+      $("#example_trace li").click(function(t){
+	  console.log(t);
+	  var url='https://github.com/allali/xstrace/tree/main/sample/'+$(this).text();
+      });
+      
+    $('[type=file]').change(function () {
+	if (!("files" in this)) {
+            alert("File reading not supported in this browser");
+        }
+        var file = this.files && this.files[0];
+        if (!file) {
+            return;
+        }
+        var fileReader = new FileReader();
+
+        fileReader.onload = function (e) {
+            var text = e.target.result;
+	    load_strace(text);
         };
 	
         fileReader.readAsText(this.files[0]);
@@ -287,6 +358,9 @@
     <p> To use this tool, juste upload a trace generated using <code>strace -f -o trace.log ./a.out</code> </p>
     <p> No data is transfert to a webserver: javascript will parse the log file and create visual, all in your browser </p>
     <p> fill free to submit improvements and/or to fork : this code is under beerware licence (see LICENCE file) :)</p>
+    <ul id="example_trace">
+      <li> dup.log </li>
+    </ul>
     </div>
     
   <input id="tracefile" type="file">

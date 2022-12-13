@@ -5,7 +5,7 @@ TRACES=$(FILES:%.c=%.log)
 all: $(BIN) $(TRACES)
 
 clean:
-	rm $(BIN) $(TRACES)
+	rm $(BIN) 
 
 %.bin: %.c
 	gcc $< -o $@
