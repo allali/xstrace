@@ -40,14 +40,15 @@
   }
 
   
-  function exec_sc(trace,prefix){
+  function exec_cb(trace,prefix){
       console.log("exec cb: ",trace);
       // update binary
       var bin=trace['raw'].split('"')[1];
-      get(prefix+"_BIN").innerHTML=bin;      
+      get(prefix+"_BIN").innerHTML=bin;
+      $("#SVG")[0].contentDocument.getElementById('BUTTON_START_G').style.display='block';
   }
 
-  function open_sc(trace,prefix){
+  function open_cb(trace,prefix){
       var fd=trace['return']; 
       get(prefix+"_FD"+fd).style.fill="blue";
       // add line
@@ -136,48 +137,52 @@
 
   function pipe_cb(trace,prefix){
       var p=trace['args'].split(',');
-      var pin=p[0].substring(1);
-      var pout=p[1].substring(0,p[1].length-1);
+      var pin=p[0].substring(1).trim();
+      var pout=p[1].substring(0,p[1].length-1).trim();
       console.log(pin,pout);
       get(prefix+"_FD"+pin).style.fill="blue";
       get(prefix+"_FD"+pout).style.fill="blue";
-      // add line
+      
+      // find free pipe in kernel system:
+      var i=0;
+      while(i<=5 && get('K_P'+i).style.stroke!='white') ++i;
+      get('K_P'+i).style.stroke='black';      
+      var g=get('K_P'+i).getBBox();
+      
+      // add line for pin
       var f=get(prefix+"_FD"+pin).getBBox();
       var t=get(prefix+"_FD"+pin+"D").getBBox();
       var l=create_line(prefix+"fdl"+pin,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
-      $("#SVG")[0].contentDocument.documentElement.append(l);;
-      // add line
+      $("#SVG")[0].contentDocument.documentElement.append(l);      
+      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+pin,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/4));
+      get(prefix+"_FD"+pin+"DT").innerHTML='R';
+      
+      // add line for pout
       var f=get(prefix+"_FD"+pout).getBBox();
       var t=get(prefix+"_FD"+pout+"D").getBBox();
       var l=create_line(prefix+"fdl"+pout,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
-      $("#SVG")[0].contentDocument.documentElement.append(l);
-      // find free slote in file system:
-      var i=0;
-      while(i<=16 && get('K_F'+i).innerHTML!='') ++i;
-      var fn=trace['raw'].split(',')[1]; // the filename
-      get('K_F'+i).innerHTML=fn;
-      var g=get('K_F'+i).getBBox();
-      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+fd,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/2));
-      // TODO: add position and rights in second column
-      var r='';
-      if (trace['raw'].includes("O_RDWR")) r='RW';
-      else if (trace['raw'].includes("O_RDONLY")) r='R';
-      else if (trace['raw'].includes("O_WRONLY")) r='W';
-      r=r+'/ - '; // no offset for pipe
-      get(prefix+"_FD"+fd+"DT").innerHTML=r;
+      $("#SVG")[0].contentDocument.documentElement.append(l);            
+      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+pout,t.x+t.width,t.y+t.height/2,g.x,g.y+3*g.height/4));
+      get(prefix+"_FD"+pout+"DT").innerHTML='W';
       
   }
+
+  function prlimit_cb(trace,prefix){
+      console.log('prlimit');
+      if (trace['args'].includes("RLIMIT_STACK"))
+	  $("#SVG")[0].contentDocument.getElementById('BUTTON_START_G').style.display='none';
+  }
   
-  
-  var sc_callback={'execve':exec_sc,
-		   'openat':open_sc,
+  var sc_callback={'execve':exec_cb,
+		   'openat':open_cb,
 		   'close':close_cb,
 		   'read':readwrite_cb,
 		   'pread64':readwrite_cb,
 		   'write':readwrite_cb,
 		   'dup':dup_cb,
 		   'dup2':dup2_cb,
-		   'pipe2':pipe_cb};
+		   'pipe2':pipe_cb,
+		   'prlimit64':prlimit_cb};
 
   function next_trace(){
       console.log("next trace");
@@ -243,6 +248,8 @@
       // Hide kernel stuff:
       for(var i=0;i<=16;++i)
 	  get('K_F'+i).innerHTML=''; // open files
+      for(var i=0;i<=5;++i)
+	  get('K_P'+i).style.stroke='white'; // hide pipes
       // TODO: hide all process except P0
       get('P1').style.display="none";
       // for each process, hide text, add fd012 lines
@@ -261,6 +268,8 @@
 	  get('P'+p+"_FD"+1+"DT").innerHTML="W/0 (?)";
 	  get('P'+p+"_FD"+2+"DT").innerHTML="W/0 (?)";
       }
+      // hide skip libraries loading button
+      $("#SVG")[0].contentDocument.getElementById('BUTTON_START_G').style.display='none';
       next_trace(); // load first trace
   }
   
@@ -273,48 +282,56 @@
   }
 
 
-  	function load_strace(text){	    
-	    $("#tracefile").hide();
-	    $("#intro").hide();
-	    // parsing strace file....
-	    line_re = RegExp("([^\\(]*)\\((.*)\\)\\ +=\\ (.*)$");
-	    var lines=text.split('\n'),i;
-	    for(i=0;i<lines.length;++i){
-		var x=lines[i].indexOf(' ')
-		if (x==-1) continue;
-		pid=lines[i].substr(0,x);
-		var raw=lines[i].substr(x+1)
-		m=line_re.exec(raw);
-		if (m=== null || m.length!=4){ console.log("skip:",m);}
-		else {
-		    var sc=m[1];
-		    var args=m[2];
-		    var rets=m[3];
-		    var ret=rets,e=null;
-		    var x=rets.indexOf(' ');
-		    if (x!=-1) {
-			ret=rets.substr(0,x);
-			e=rets.substr(x+1);
-		    }
-		    console.log(m);
-		    console.log(pid,sc,raw,"return:",ret,"error:",e);
-		    traces.push({'pid':pid,'sc':sc,'raw':raw,'return':ret,'error':e,'args':args});
-		}
-	    }
-	    console.log(traces);
+  function load_strace(text){	    
+      $("#tracefile").hide();
+      $("#intro").hide();
+      // parsing strace file....
+      line_re = RegExp("([^\\(]*)\\((.*)\\)\\ +=\\ (.*)$");
+      var lines=text.split('\n'),i;
+      for(i=0;i<lines.length;++i){
+	  var x=lines[i].indexOf(' ')
+	  if (x==-1) continue;
+	  pid=lines[i].substr(0,x);
+	  var raw=lines[i].substr(x+1)
+	  m=line_re.exec(raw);
+	  if (m=== null || m.length!=4){ console.log("skip:",m);}
+	  else {
+	      var sc=m[1];
+	      var args=m[2];
+	      var rets=m[3];
+	      var ret=rets,e=null;
+	      var x=rets.indexOf(' ');
+	      if (x!=-1) {
+		  ret=rets.substr(0,x);
+		  e=rets.substr(x+1);
+	      }
+	      console.log(m);
+	      console.log(pid,sc,raw,"return:",ret,"error:",e);
+	      traces.push({'pid':pid,'sc':sc,'raw':raw,'return':ret,'error':e,'args':args});
+	  }
+      }
+      console.log(traces);
 
-	    $("#SVG").show({complete : function(){
-		// From now, SVG is load, we can work on it....
-		$("#SVG")[0].contentDocument.getElementById('next').onclick=next_trace;
-		$("#SVG")[0].contentDocument.getElementById('next_ok').onclick=next_trace_ok;
-		$("#SVG")[0].contentDocument.getElementById('BUTTON_START').onclick=next_trace_init;
-		init_trace();
-	    }});
-	}
+      $("#SVG").show({complete : function(){
+	  // From now, SVG is load, we can work on it....
+	  $("#SVG")[0].contentDocument.getElementById('next').onclick=next_trace;
+	  $("#SVG")[0].contentDocument.getElementById('next_ok').onclick=next_trace_ok;
+	  $("#SVG")[0].contentDocument.getElementById('BUTTON_START').onclick=next_trace_init;
+	  init_trace();
+      }});
+  }
   
   
   $(document).ready(function () {
 
+      examples=["read","open_read","write","open_write","dup","dup2","pipe","fork"];
+      $.each(examples, function(i){
+	  console.log("add example:"+i);
+	  var e=examples[i];
+	  $('#example_trace').append(
+	      '<li> <span class="trace">'+e+'.log</span> / <a href="https://github.com/allali/xstrace/blob/main/sample/'+e+'.c">'+e+'.c</a></li>');
+      });
+      
       $("body").keydown(function(e){
 	  if ((e.keyCode==39) || (e.keyCode==32)){
 	      next_trace();
@@ -323,9 +340,13 @@
 	  }
       });
 
-      $("#example_trace li").click(function(t){
+      $("#example_trace li span.trace").click(function(t){
 	  console.log(t);
-	  var url='https://github.com/allali/xstrace/tree/main/sample/'+$(this).text();
+	  console.log($(this).text());
+	  var url='https://raw.githubusercontent.com/allali/xstrace/main/sample/'+$(this).text().trim();
+	  $.ajax({url:url}).done(function(data){
+	      load_strace(data);
+	  });
       });
       
     $('[type=file]').change(function () {
@@ -359,7 +380,6 @@
     <p> No data is transfert to a webserver: javascript will parse the log file and create visual, all in your browser </p>
     <p> fill free to submit improvements and/or to fork : this code is under beerware licence (see LICENCE file) :)</p>
     <ul id="example_trace">
-      <li> dup.log </li>
     </ul>
     </div>
     
