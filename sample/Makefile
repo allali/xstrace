@@ -12,5 +12,5 @@ clean:
 
 
 %.log: %.bin
-	strace -f -o $@ ./$< < in q
+	strace -f -e status=successful,failed -o $@ ./$< < in q
 

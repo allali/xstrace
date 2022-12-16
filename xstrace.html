@@ -167,10 +167,62 @@
       
   }
 
+  function exit_cb(trace,prefix){
+      get(prefix+'_BOX').style.fill='grey';
+      get(prefix+'_RETURN').innerHTML=trace['args'];
+  }
+
   function prlimit_cb(trace,prefix){
       console.log('prlimit');
       if (trace['args'].includes("RLIMIT_STACK"))
 	  $("#SVG")[0].contentDocument.getElementById('BUTTON_START_G').style.display='none';
+  }
+
+
+  function clone_cb(trace,prefix){
+      // fork: find a free process....
+      child_pid=trace['return'].trim();
+      process[child_pid] = new Object();
+      process[child_pid].id=Object.keys(process).length-1;
+      child_prefix='P'+process[child_pid].id;
+      
+      get(child_prefix+"_PID").innerHTML=child_pid;
+      get(child_prefix).style.display="block";
+      // copy binary name
+      get(child_prefix+'_BIN').innerHTML=get(prefix+'_BIN').innerHTML;      
+      // copy sys call trace
+      for(var i=0;i<10;++i){
+	  get(child_prefix+'_LAST_SC'+i).innerHTML=get(prefix+'_LAST_SC'+i).innerHTML;
+	  get(child_prefix+'_LAST_SC'+i).style.fill=get(prefix+'_LAST_SC'+i).style.fill;
+      }
+      get(child_prefix+'_CURRENT_SC').innerHTML=get(prefix+'_CURRENT_SC').innerHTML;
+      get(child_prefix+'_CURRENT_SC').style.fill=get(prefix+'_CURRENT_SC').style.fill;
+      // copy fd table
+      //   copy fdd      
+      for(var i=0;i<13;++i)
+	  get(child_prefix+'_FD'+i+'DT').innerHTML=get(prefix+'_FD'+i+'DT').innerHTML;
+      // copy FD style
+      for(var i=0;i<13;++i)
+	  get(child_prefix+'_FD'+i).style.stroke=get(prefix+'_FD'+i).style.stroke;
+      // copy FD to FDD line
+      // get 
+      for(var i=0;i<13;++i){
+	  var l=get(prefix+"fdl"+i);
+	  if (l){
+	      console.log(l,l.x1,l.x2);
+	      var f=get(child_prefix+"_FD"+i).getBBox();
+	      var x=f.x+f.width/2;
+	      var y=f.y+f.height/2;
+	      var l=create_line(child_prefix+"fdl"+i,
+				x,y,
+				x+(l.getAttribute("x2")-l.getAttribute("x1")),
+				y+(l.getAttribute("y2")-l.getAttribute("y1")));
+	      $("#SVG")[0].contentDocument.documentElement.append(l);
+	  }
+      }
+      
+      
+      
   }
   
   var sc_callback={'execve':exec_cb,
@@ -182,7 +234,9 @@
 		   'dup':dup_cb,
 		   'dup2':dup2_cb,
 		   'pipe2':pipe_cb,
-		   'prlimit64':prlimit_cb};
+		   'prlimit64':prlimit_cb,
+		   'exit_group':exit_cb,
+		   'clone':clone_cb};
 
   function next_trace(){
       console.log("next trace");
@@ -253,20 +307,23 @@
       // TODO: hide all process except P0
       get('P1').style.display="none";
       // for each process, hide text, add fd012 lines
-      for(var p=0;p<1;p++){
+      for(var p=0;p<2;p++){
+	  get('P'+p+'_RETURN').innerHTML='';
 	  for(var i=0;i<10;++i)
 	      get('P'+p+'_LAST_SC'+i).innerHTML='';
 	  for(var i=0;i<13;++i)
 	      get('P'+p+'_FD'+i+'DT').innerHTML='';
-	  for(var i=0;i<3;++i){
-	      var f=get('P'+p+"_FD"+i).getBBox();
-	      var t=get('P'+p+"_FD"+i+'D').getBBox();
-	      var l=create_line('P'+p+"fdl"+i,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
-	      $("#SVG")[0].contentDocument.documentElement.append(l);	  
+	  if (p==0){
+	      for(var i=0;i<3;++i){
+		  var f=get('P'+p+"_FD"+i).getBBox();
+		  var t=get('P'+p+"_FD"+i+'D').getBBox();
+		  var l=create_line('P'+p+"fdl"+i,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
+		  $("#SVG")[0].contentDocument.documentElement.append(l);	  
+	      }
+	      get('P'+p+"_FD"+0+"DT").innerHTML="R/0 (?)";
+	      get('P'+p+"_FD"+1+"DT").innerHTML="W/0 (?)";
+	      get('P'+p+"_FD"+2+"DT").innerHTML="W/0 (?)";
 	  }
-	  get('P'+p+"_FD"+0+"DT").innerHTML="R/0 (?)";
-	  get('P'+p+"_FD"+1+"DT").innerHTML="W/0 (?)";
-	  get('P'+p+"_FD"+2+"DT").innerHTML="W/0 (?)";
       }
       // hide skip libraries loading button
       $("#SVG")[0].contentDocument.getElementById('BUTTON_START_G').style.display='none';
@@ -294,7 +351,14 @@
 	  pid=lines[i].substr(0,x);
 	  var raw=lines[i].substr(x+1)
 	  m=line_re.exec(raw);
-	  if (m=== null || m.length!=4){ console.log("skip:",m);}
+	  if (m=== null || m.length!=4){	      
+	      console.log("skip:",raw);
+	      if (raw.includes('+++ exited')){
+		  v=raw.split(" ");
+		  console.log(v);
+		  traces.push({'pid':pid,'sc':'exit_group','raw':v[3],'return':'?','error':null,'args':''});
+	      }
+	  }
 	  else {
 	      var sc=m[1];
 	      var args=m[2];
@@ -305,12 +369,12 @@
 		  ret=rets.substr(0,x);
 		  e=rets.substr(x+1);
 	      }
-	      console.log(m);
-	      console.log(pid,sc,raw,"return:",ret,"error:",e);
+	      //console.log(m);
+	      //console.log(pid,sc,raw,"return:",ret,"error:",e);
 	      traces.push({'pid':pid,'sc':sc,'raw':raw,'return':ret,'error':e,'args':args});
 	  }
       }
-      console.log(traces);
+      //console.log(traces);
 
       $("#SVG").show({complete : function(){
 	  // From now, SVG is load, we can work on it....
@@ -376,7 +440,7 @@
       syscall and debugging small programs.</p>
     <p> This tools only deals with a limited number of processus (ie. 4). </p>
     <p> Not all syscall are dealed (ie. graphically represented). This can lead to wrong/confusing/buggy graphical representation. </p>
-    <p> To use this tool, juste upload a trace generated using <code>strace -f -o trace.log ./a.out</code> </p>
+    <p> To use this tool, juste upload a trace generated using <code>strace -f -e status=successful,failed -o trace.log ./a.out</code> </p>
     <p> No data is transfert to a webserver: javascript will parse the log file and create visual, all in your browser </p>
     <p> fill free to submit improvements and/or to fork : this code is under beerware licence (see LICENCE file) :)</p>
     <ul id="example_trace">
