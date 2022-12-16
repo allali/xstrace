@@ -24,14 +24,19 @@
 
   var pending_cb=[];
 
-  function create_line(id,x1,y1,x2,y2){
+  function create_line(id,x1,y1,x2,y2,arrowstart,arrowend){
       var newLine = document.createElementNS('http://www.w3.org/2000/svg','line');
       newLine.setAttribute('id',id);
       newLine.setAttribute('x1',x1);
       newLine.setAttribute('y1',y1);
       newLine.setAttribute('x2',x2);
       newLine.setAttribute('y2',y2);
+      newLine.setAttribute('stroke-width',"0.5px");
       newLine.setAttribute('stroke',"black");
+      if (arrowend)
+	  newLine.setAttribute('marker-end','url(#Arrow1Mend)');
+      if (arrowstart)
+	  newLine.setAttribute('marker-start','url(#Arrow1Mstart)');
       return newLine;
   }
   
@@ -57,20 +62,21 @@
       var l=create_line(prefix+"fdl"+fd,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
 //      l.style.stroke="black";
       $("#SVG")[0].contentDocument.documentElement.append(l);
+      var r='';
+      var s=false,e=false;
+      if (trace['raw'].includes("O_RDWR")) r='RW';
+      else if (trace['raw'].includes("O_RDONLY")) {r='R'; s=true;}
+      else if (trace['raw'].includes("O_WRONLY")) {r='W';e=true;}
+      r=r+'/'+0; // 0 is the position in file
+      get(prefix+"_FD"+fd+"DT").innerHTML=r;
       // find free slote in file system:
       var i=0;
       while(i<=16 && get('K_F'+i).innerHTML!='') ++i;
       var fn=trace['raw'].split(',')[1]; // the filename
       get('K_F'+i).innerHTML=fn;
       var g=get('K_F'+i).getBBox();
-      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+fd,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/2));
+      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+fd,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/2,s,e));
       // TODO: add position and rights in second column
-      var r='';
-      if (trace['raw'].includes("O_RDWR")) r='RW';
-      else if (trace['raw'].includes("O_RDONLY")) r='R';
-      else if (trace['raw'].includes("O_WRONLY")) r='W';
-      r=r+'/'+0; // 0 is the position in file
-      get(prefix+"_FD"+fd+"DT").innerHTML=r;
   }
 
   
@@ -154,7 +160,7 @@
       var t=get(prefix+"_FD"+pin+"D").getBBox();
       var l=create_line(prefix+"fdl"+pin,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
       $("#SVG")[0].contentDocument.documentElement.append(l);      
-      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+pin,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/4));
+      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+pin,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/4,true,false));
       get(prefix+"_FD"+pin+"DT").innerHTML='R';
       
       // add line for pout
@@ -162,7 +168,7 @@
       var t=get(prefix+"_FD"+pout+"D").getBBox();
       var l=create_line(prefix+"fdl"+pout,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
       $("#SVG")[0].contentDocument.documentElement.append(l);            
-      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+pout,t.x+t.width,t.y+t.height/2,g.x,g.y+3*g.height/4));
+      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+pout,t.x+t.width,t.y+t.height/2,g.x,g.y+3*g.height/4,false,true));
       get(prefix+"_FD"+pout+"DT").innerHTML='W';
       
   }
@@ -226,11 +232,13 @@
 	      var f=get(child_prefix+"_FD"+i+"D").getBBox();
 	      var x=f.x+f.width;
 	      var y=f.y+f.height/2;
-	      var l=create_line(child_prefix+"fdll"+i,
+	      var m=create_line(child_prefix+"fdll"+i,
 				x,y,
 				l.getAttribute("x2"),
 				l.getAttribute("y2"));
-	      $("#SVG")[0].contentDocument.documentElement.append(l);	      
+	      m.setAttribute("marker-end",l.getAttribute("marker-end"));
+	      m.setAttribute("marker-start",l.getAttribute("marker-start"));
+	      $("#SVG")[0].contentDocument.documentElement.append(m);	      
 	  }
       }       
   }
