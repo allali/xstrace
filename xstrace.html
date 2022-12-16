@@ -168,6 +168,7 @@
   }
 
   function exit_cb(trace,prefix){
+      console.log("exit:",trace);
       get(prefix+'_BOX').style.fill='grey';
       get(prefix+'_RETURN').innerHTML=trace['args'];
   }
@@ -202,14 +203,15 @@
       for(var i=0;i<13;++i)
 	  get(child_prefix+'_FD'+i+'DT').innerHTML=get(prefix+'_FD'+i+'DT').innerHTML;
       // copy FD style
-      for(var i=0;i<13;++i)
+      for(var i=0;i<13;++i){
 	  get(child_prefix+'_FD'+i).style.stroke=get(prefix+'_FD'+i).style.stroke;
+	  get(child_prefix+'_FD'+i).style.fill=get(prefix+'_FD'+i).style.fill;
+      }
       // copy FD to FDD line
       // get 
       for(var i=0;i<13;++i){
 	  var l=get(prefix+"fdl"+i);
 	  if (l){
-	      console.log(l,l.x1,l.x2);
 	      var f=get(child_prefix+"_FD"+i).getBBox();
 	      var x=f.x+f.width/2;
 	      var y=f.y+f.height/2;
@@ -219,10 +221,18 @@
 				y+(l.getAttribute("y2")-l.getAttribute("y1")));
 	      $("#SVG")[0].contentDocument.documentElement.append(l);
 	  }
-      }
-      
-      
-      
+	  l=get(prefix+"fdll"+i);
+	  if (l){
+	      var f=get(child_prefix+"_FD"+i+"D").getBBox();
+	      var x=f.x+f.width;
+	      var y=f.y+f.height/2;
+	      var l=create_line(child_prefix+"fdll"+i,
+				x,y,
+				l.getAttribute("x2"),
+				l.getAttribute("y2"));
+	      $("#SVG")[0].contentDocument.documentElement.append(l);	      
+	  }
+      }       
   }
   
   var sc_callback={'execve':exec_cb,
@@ -354,13 +364,13 @@
 	  if (m=== null || m.length!=4){	      
 	      console.log("skip:",raw);
 	      if (raw.includes('+++ exited')){
-		  v=raw.split(" ");
+		  v=raw.trim().split(" ");
 		  console.log(v);
-		  traces.push({'pid':pid,'sc':'exit_group','raw':v[3],'return':'?','error':null,'args':''});
+		  traces.push({'pid':pid,'sc':'exit_group','raw':v[3],'return':'?','error':null,'args':v[3]});
 	      }
 	  }
 	  else {
-	      var sc=m[1];
+	      var sc=m[1].trim();
 	      var args=m[2];
 	      var rets=m[3];
 	      var ret=rets,e=null;
