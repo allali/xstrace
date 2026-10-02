@@ -1,475 +1,110 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <style>
-      #SVG{
-	  width: 100%;
-	  height: 100%;
-      }
-      
-      #SVGdiv {
-	  position: absolute;
-	  top: 0;
-	  left: 0;
-	  right: 0;
-	  bottom: 0;
-      }
-    </style>
-      
-<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.1/jquery.min.js"></script>
-<script>
-  var traces=[];
-  var process={}
-  var current=0;
-
-  var pending_cb=[];
-
-  function create_line(id,x1,y1,x2,y2,arrowstart,arrowend){
-      var newLine = document.createElementNS('http://www.w3.org/2000/svg','line');
-      newLine.setAttribute('id',id);
-      newLine.setAttribute('x1',x1);
-      newLine.setAttribute('y1',y1);
-      newLine.setAttribute('x2',x2);
-      newLine.setAttribute('y2',y2);
-      newLine.setAttribute('stroke-width',"0.5px");
-      newLine.setAttribute('stroke',"black");
-      if (arrowend)
-	  newLine.setAttribute('marker-end','url(#Arrow1Mend)');
-      if (arrowstart)
-	  newLine.setAttribute('marker-start','url(#Arrow1Mstart)');
-      return newLine;
-  }
-  
-  function get(id){
-      return $("#SVG")[0].contentDocument.getElementById(id);
-  }
-
-  
-  function exec_cb(trace,prefix){
-      console.log("exec cb: ",trace);
-      // update binary
-      var bin=trace['raw'].split('"')[1];
-      get(prefix+"_BIN").innerHTML=bin;
-      $("#SVG")[0].contentDocument.getElementById('BUTTON_START_G').style.display='block';
-  }
-
-  function open_cb(trace,prefix){
-      var fd=trace['return']; 
-      get(prefix+"_FD"+fd).style.fill="blue";
-      // add line
-      var f=get(prefix+"_FD"+fd).getBBox();
-      var t=get(prefix+"_FD"+fd+"D").getBBox();
-      var l=create_line(prefix+"fdl"+fd,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
-//      l.style.stroke="black";
-      $("#SVG")[0].contentDocument.documentElement.append(l);
-      var r='';
-      var s=false,e=false;
-      if (trace['raw'].includes("O_RDWR")) r='RW';
-      else if (trace['raw'].includes("O_RDONLY")) {r='R'; s=true;}
-      else if (trace['raw'].includes("O_WRONLY")) {r='W';e=true;}
-      r=r+'/'+0; // 0 is the position in file
-      get(prefix+"_FD"+fd+"DT").innerHTML=r;
-      // find free slote in file system:
-      var i=0;
-      while(i<=16 && get('K_F'+i).innerHTML!='') ++i;
-      var fn=trace['raw'].split(',')[1]; // the filename
-      get('K_F'+i).innerHTML=fn;
-      var g=get('K_F'+i).getBBox();
-      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+fd,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/2,s,e));
-      // TODO: add position and rights in second column
-  }
-
-  
-  function close_cb(trace,prefix){
-      get(prefix+'_FD'+trace['args']).style.fill="none";
-      get(prefix+'_FD'+trace['args']+'DT').innerHTML='';
-      // remove lines
-      var x=get(prefix+'fdl'+trace['args']);
-      if (x!==null) x.remove();
-      x=get(prefix+'fdll'+trace['args']);
-      if (x!==null) x.remove();
-  }
-
-  function readwrite_cb(trace,prefix){
-      // TODO: update fd offset value
-      var col="red";
-      if (trace['sc'].includes('read'))  col="green";
-      var fd=trace['args'].split(',')[0];
-      var x=get(prefix+"_FD"+fd);      
-      var l1=get(prefix+'fdl'+fd);
-      var l2=get(prefix+'fdll'+fd);
-      x.style.stroke=col;
-      x.style.fill=col;
-      if (l1) l1.style.stroke=col;
-      if (l2) l2.style.stroke=col;
-      pending_cb.push(function(){
-	  x.style.stroke="black";
-	  x.style.fill="blue";
-	  if (l1) l1.style.stroke="black";
-	  if (l2) l2.style.stroke="black";	  
-      });
-  }
-
-  function dup_cb(trace,prefix){
-      console.log("dup sc : ");
-      console.log(trace);
-      var src=trace['args'];
-      var dst=trace['return'];
-      // draw a line drom dst fdd to src fdd
-      get(prefix+"_FD"+dst).style.fill="blue";   
-      var f=get(prefix+"_FD"+dst).getBBox();   
-      var t=get(prefix+"_FD"+src+"D").getBBox();
-      var l=create_line(prefix+"fdl"+dst,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
-      $("#SVG")[0].contentDocument.documentElement.append(l);
-  }
-  
-  function dup2_cb(trace,prefix){
-      console.log("dup2 sc : ");
-
-      var src=trace['args'].split(",")[0].trim();
-      var dst=trace['args'].split(",")[1].trim();
-      // first reset dst         
-      var l=get(prefix+'fdl'+dst);
-      if (l!==null)  l.remove();
-      l=get(prefix+'fdll'+dst);
-      if (l!==null)  l.remove();
-      // draw a line drom dst fdd to src fdd
-      get(prefix+"_FD"+dst).style.fill="blue";   
-      var f=get(prefix+"_FD"+dst).getBBox();   
-      var t=get(prefix+"_FD"+src+"D").getBBox();
-      var l=create_line(prefix+"fdl"+dst,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
-      $("#SVG")[0].contentDocument.documentElement.append(l);
-  }
-
-  function pipe_cb(trace,prefix){
-      var p=trace['args'].split(',');
-      var pin=p[0].substring(1).trim();
-      var pout=p[1].substring(0,p[1].length-1).trim();
-      console.log(pin,pout);
-      get(prefix+"_FD"+pin).style.fill="blue";
-      get(prefix+"_FD"+pout).style.fill="blue";
-      
-      // find free pipe in kernel system:
-      var i=0;
-      while(i<=5 && get('K_P'+i).style.stroke!='white') ++i;
-      get('K_P'+i).style.stroke='black';      
-      var g=get('K_P'+i).getBBox();
-      
-      // add line for pin
-      var f=get(prefix+"_FD"+pin).getBBox();
-      var t=get(prefix+"_FD"+pin+"D").getBBox();
-      var l=create_line(prefix+"fdl"+pin,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
-      $("#SVG")[0].contentDocument.documentElement.append(l);      
-      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+pin,t.x+t.width,t.y+t.height/2,g.x,g.y+g.height/4,true,false));
-      get(prefix+"_FD"+pin+"DT").innerHTML='R';
-      
-      // add line for pout
-      var f=get(prefix+"_FD"+pout).getBBox();
-      var t=get(prefix+"_FD"+pout+"D").getBBox();
-      var l=create_line(prefix+"fdl"+pout,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
-      $("#SVG")[0].contentDocument.documentElement.append(l);            
-      $("#SVG")[0].contentDocument.documentElement.append(create_line(prefix+"fdll"+pout,t.x+t.width,t.y+t.height/2,g.x,g.y+3*g.height/4,false,true));
-      get(prefix+"_FD"+pout+"DT").innerHTML='W';
-      
-  }
-
-  function exit_cb(trace,prefix){
-      console.log("exit:",trace);
-      get(prefix+'_BOX').style.fill='grey';
-      get(prefix+'_RETURN').innerHTML=trace['args'];
-  }
-
-  function prlimit_cb(trace,prefix){
-      console.log('prlimit');
-      if (trace['args'].includes("RLIMIT_STACK"))
-	  $("#SVG")[0].contentDocument.getElementById('BUTTON_START_G').style.display='none';
-  }
-
-
-  function clone_cb(trace,prefix){
-      // fork: find a free process....
-      child_pid=trace['return'].trim();
-      process[child_pid] = new Object();
-      process[child_pid].id=Object.keys(process).length-1;
-      child_prefix='P'+process[child_pid].id;
-      
-      get(child_prefix+"_PID").innerHTML=child_pid;
-      get(child_prefix).style.display="block";
-      // copy binary name
-      get(child_prefix+'_BIN').innerHTML=get(prefix+'_BIN').innerHTML;      
-      // copy sys call trace
-      for(var i=0;i<10;++i){
-	  get(child_prefix+'_LAST_SC'+i).innerHTML=get(prefix+'_LAST_SC'+i).innerHTML;
-	  get(child_prefix+'_LAST_SC'+i).style.fill=get(prefix+'_LAST_SC'+i).style.fill;
-      }
-      get(child_prefix+'_CURRENT_SC').innerHTML=get(prefix+'_CURRENT_SC').innerHTML;
-      get(child_prefix+'_CURRENT_SC').style.fill=get(prefix+'_CURRENT_SC').style.fill;
-      // copy fd table
-      //   copy fdd      
-      for(var i=0;i<13;++i)
-	  get(child_prefix+'_FD'+i+'DT').innerHTML=get(prefix+'_FD'+i+'DT').innerHTML;
-      // copy FD style
-      for(var i=0;i<13;++i){
-	  get(child_prefix+'_FD'+i).style.stroke=get(prefix+'_FD'+i).style.stroke;
-	  get(child_prefix+'_FD'+i).style.fill=get(prefix+'_FD'+i).style.fill;
-      }
-      // copy FD to FDD line
-      // get 
-      for(var i=0;i<13;++i){
-	  var l=get(prefix+"fdl"+i);
-	  if (l){
-	      var f=get(child_prefix+"_FD"+i).getBBox();
-	      var x=f.x+f.width/2;
-	      var y=f.y+f.height/2;
-	      var l=create_line(child_prefix+"fdl"+i,
-				x,y,
-				x+(l.getAttribute("x2")-l.getAttribute("x1")),
-				y+(l.getAttribute("y2")-l.getAttribute("y1")));
-	      $("#SVG")[0].contentDocument.documentElement.append(l);
-	  }
-	  l=get(prefix+"fdll"+i);
-	  if (l){
-	      var f=get(child_prefix+"_FD"+i+"D").getBBox();
-	      var x=f.x+f.width;
-	      var y=f.y+f.height/2;
-	      var m=create_line(child_prefix+"fdll"+i,
-				x,y,
-				l.getAttribute("x2"),
-				l.getAttribute("y2"));
-	      m.setAttribute("marker-end",l.getAttribute("marker-end"));
-	      m.setAttribute("marker-start",l.getAttribute("marker-start"));
-	      $("#SVG")[0].contentDocument.documentElement.append(m);	      
-	  }
-      }       
-  }
-  
-  var sc_callback={'execve':exec_cb,
-		   'openat':open_cb,
-		   'close':close_cb,
-		   'read':readwrite_cb,
-		   'pread64':readwrite_cb,
-		   'write':readwrite_cb,
-		   'dup':dup_cb,
-		   'dup2':dup2_cb,
-		   'pipe2':pipe_cb,
-		   'prlimit64':prlimit_cb,
-		   'exit_group':exit_cb,
-		   'clone':clone_cb};
-
-  function next_trace(){
-      console.log("next trace");
-      pending_cb.forEach(function(cb){cb();});
-      pending_cb=[];
-      if (current>=traces.length) return;
-      console.log(traces[current]);
-      var trace=traces[current];
-      if (!(trace['pid'] in process)){ // this is a new process
-	  process[trace['pid']]=new Object();
-	  process[trace['pid']].id=Object.keys(process).length-1;
-	  // set pid
-	  get("P"+process[trace['pid']].id+"_PID").innerHTML=trace['pid'];
-      }
-      var prefix="P"+process[trace['pid']].id;
-      // update current sys call
-      var csc=get(prefix+"_CURRENT_SC");
-
-      // show current process as the active one:
-      get(prefix+"_BOX").style.stroke='red';
-      pending_cb.push(function(){
-	  get(prefix+"_BOX").style.stroke="black";
-      });
-      
-      csc.innerHTML=trace['raw'].substr(0,30);
-      get("CURRENT_TRACE").innerHTML=trace['raw'];
-      if (trace['error']===null)
-	  csc.style.fill='green';
-      else
-	  csc.style.fill='red';
-      
-      pending_cb.push(function(){ // remove text from current sc and add it to last sc
-	  console.log("cb...");
-	  var txt=csc.innerHTML;
-	  for(var i=9;i>0;--i){
-	      var a=get(prefix+"_LAST_SC"+i), b=get(prefix+"_LAST_SC"+(i-1));
-	      a.innerHTML=b.innerHTML;
-	      a.style.fill=b.style.fill;	      
-	  }
-	  var a=get(prefix+"_LAST_SC0");
-	  a.innerHTML=txt;
-	  a.style.fill=csc.style.fill;
-	  csc.innerHTML="";
-	  // get the position of a text box: t.children[0].getExtentOfChar(0)
-	  // 
-      });
-
-      if (trace['error']===null){
-	  if (trace['sc'] in sc_callback)  sc_callback[trace['sc']](trace,prefix);
-      }
-      
-      current+=1;
-  }
-
-  function next_trace_ok(){
-      next_trace();
-      while ((current<traces.length) && (traces[current-1]['error']!==null)) next_trace();
-      console.log(traces[current]);
-  }
-
-  function init_trace(){
-      console.log("init trace");
-      // Hide kernel stuff:
-      for(var i=0;i<=16;++i)
-	  get('K_F'+i).innerHTML=''; // open files
-      for(var i=0;i<=5;++i)
-	  get('K_P'+i).style.stroke='white'; // hide pipes
-      // TODO: hide all process except P0
-      get('P1').style.display="none";
-      // for each process, hide text, add fd012 lines
-      for(var p=0;p<2;p++){
-	  get('P'+p+'_RETURN').innerHTML='';
-	  for(var i=0;i<10;++i)
-	      get('P'+p+'_LAST_SC'+i).innerHTML='';
-	  for(var i=0;i<13;++i)
-	      get('P'+p+'_FD'+i+'DT').innerHTML='';
-	  if (p==0){
-	      for(var i=0;i<3;++i){
-		  var f=get('P'+p+"_FD"+i).getBBox();
-		  var t=get('P'+p+"_FD"+i+'D').getBBox();
-		  var l=create_line('P'+p+"fdl"+i,f.x+f.width/2,f.y+f.height/2,t.x,t.y+t.height/2);
-		  $("#SVG")[0].contentDocument.documentElement.append(l);	  
-	      }
-	      get('P'+p+"_FD"+0+"DT").innerHTML="R/0 (?)";
-	      get('P'+p+"_FD"+1+"DT").innerHTML="W/0 (?)";
-	      get('P'+p+"_FD"+2+"DT").innerHTML="W/0 (?)";
-	  }
-      }
-      // hide skip libraries loading button
-      $("#SVG")[0].contentDocument.getElementById('BUTTON_START_G').style.display='none';
-      next_trace(); // load first trace
-  }
-  
-  function next_trace_init(){
-      while((current<traces.length)
-	    && (traces[current-1]['sc']!="prlimit64")
-	    && (traces[current-1]['args'].includes("RLIMIT_STACK")==false)){
-	  next_trace();
-      }
-  }
-
-
-  function load_strace(text){	    
-      $("#tracefile").hide();
-      $("#intro").hide();
-      // parsing strace file....
-      line_re = RegExp("([^\\(]*)\\((.*)\\)\\ +=\\ (.*)$");
-      var lines=text.split('\n'),i;
-      for(i=0;i<lines.length;++i){
-	  var x=lines[i].indexOf(' ')
-	  if (x==-1) continue;
-	  pid=lines[i].substr(0,x);
-	  var raw=lines[i].substr(x+1)
-	  m=line_re.exec(raw);
-	  if (m=== null || m.length!=4){	      
-	      console.log("skip:",raw);
-	      if (raw.includes('+++ exited')){
-		  v=raw.trim().split(" ");
-		  console.log(v);
-		  traces.push({'pid':pid,'sc':'exit_group','raw':v[3],'return':'?','error':null,'args':v[3]});
-	      }
-	  }
-	  else {
-	      var sc=m[1].trim();
-	      var args=m[2];
-	      var rets=m[3];
-	      var ret=rets,e=null;
-	      var x=rets.indexOf(' ');
-	      if (x!=-1) {
-		  ret=rets.substr(0,x);
-		  e=rets.substr(x+1);
-	      }
-	      //console.log(m);
-	      //console.log(pid,sc,raw,"return:",ret,"error:",e);
-	      traces.push({'pid':pid,'sc':sc,'raw':raw,'return':ret,'error':e,'args':args});
-	  }
-      }
-      //console.log(traces);
-
-      $("#SVG").show({complete : function(){
-	  // From now, SVG is load, we can work on it....
-	  $("#SVG")[0].contentDocument.getElementById('next').onclick=next_trace;
-	  $("#SVG")[0].contentDocument.getElementById('next_ok').onclick=next_trace_ok;
-	  $("#SVG")[0].contentDocument.getElementById('BUTTON_START').onclick=next_trace_init;
-	  init_trace();
-      }});
-  }
-  
-  
-  $(document).ready(function () {
-
-      examples=["read","open_read","write","open_write","dup","dup2","pipe","fork"];
-      $.each(examples, function(i){
-	  console.log("add example:"+i);
-	  var e=examples[i];
-	  $('#example_trace').append(
-	      '<li> <span class="trace">'+e+'.log</span> / <a href="https://github.com/allali/xstrace/blob/main/sample/'+e+'.c">'+e+'.c</a></li>');
-      });
-      
-      $("body").keydown(function(e){
-	  if ((e.keyCode==39) || (e.keyCode==32)){
-	      next_trace();
-	  } else if (e.keyCode==34) {
-	      next_trace_ok();
-	  }
-      });
-
-      $("#example_trace li span.trace").click(function(t){
-	  console.log(t);
-	  console.log($(this).text());
-	  var url='https://raw.githubusercontent.com/allali/xstrace/main/sample/'+$(this).text().trim();
-	  $.ajax({url:url}).done(function(data){
-	      load_strace(data);
-	  });
-      });
-      
-    $('[type=file]').change(function () {
-	if (!("files" in this)) {
-            alert("File reading not supported in this browser");
-        }
-        var file = this.files && this.files[0];
-        if (!file) {
-            return;
-        }
-        var fileReader = new FileReader();
-
-        fileReader.onload = function (e) {
-            var text = e.target.result;
-	    load_strace(text);
-        };
-	
-        fileReader.readAsText(this.files[0]);
-    });
-});
-</script>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>xstrace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/xstrace.css">
 </head>
-  <body>
-    <div id="intro">
-    <h1> xstrace </h1>
-    <p> xstrace allows you to visualise syscall of a process graphically, it can be usefull for understanding
-      syscall and debugging small programs.</p>
-    <p> This tools only deals with a limited number of processus (ie. 4). </p>
-    <p> Not all syscall are dealed (ie. graphically represented). This can lead to wrong/confusing/buggy graphical representation. </p>
-    <p> To use this tool, juste upload a trace generated using <code>strace -f -e status=successful,failed -o trace.log ./a.out</code> </p>
-    <p> No data is transfert to a webserver: javascript will parse the log file and create visual, all in your browser </p>
-    <p> fill free to submit improvements and/or to fork : this code is under beerware licence (see LICENCE file) :)</p>
-    <ul id="example_trace">
-    </ul>
-    </div>
-    
-  <input id="tracefile" type="file">
-  
-  <div class="SVGdiv">
-    <object id="SVG" data="xstrace.svg" type="image/svg+xml" style="display:none;"></object>
-  </div>
+<body>
 
+  <!-- ===================== intro / loading screen ===================== -->
+  <section id="intro">
+    <div class="intro-inner">
+      <h1><span class="logo">x</span>strace</h1>
+      <p class="lead">Replay a program's system calls step by step and watch what happens in the kernel:
+        processes, file descriptor tables, open file descriptions, files and pipes.</p>
+
+      <label id="drop" for="file">
+        <input id="file" type="file" accept=".log,.txt,.strace,text/plain">
+        <strong>Drop a strace log here</strong>
+        <span>or click to choose a file — nothing is uploaded, everything runs in your browser</span>
+      </label>
+
+      <p class="howto">Generate a trace with
+        <code>strace -f -o trace.log ./a.out</code></p>
+
+      <h2>Examples</h2>
+      <div id="examples"></div>
+
+      <p class="foot">Only a subset of syscalls is drawn (open, close, read, write, lseek, dup, pipe, fork, exec, wait…);
+        the others are listed in the timeline. Beerware licence — <a href="https://github.com/allali/xstrace">github.com/allali/xstrace</a></p>
+    </div>
+  </section>
+
+  <!-- ============================ viewer ============================== -->
+  <section id="viewer" hidden>
+    <header id="bar">
+      <button id="home" class="ghost" title="Load another trace">
+        <span class="logo">x</span><span id="trace-name">strace</span>
+      </button>
+      <div class="transport">
+        <button id="b-first" title="Start (Home)"><svg viewBox="0 0 16 16"><path d="M3 3h2v10H3zM13 3v10L6 8z"/></svg></button>
+        <button id="b-prev" title="Previous (←)"><svg viewBox="0 0 16 16"><path d="M11 3v10L4 8z"/></svg></button>
+        <button id="b-play" class="primary" title="Play / pause (P)"><svg viewBox="0 0 16 16"><path d="M5 3v10l8-5z"/></svg></button>
+        <button id="b-next" title="Next (→ or space)"><svg viewBox="0 0 16 16"><path d="M4 3v10l6-5zM11 3h2v10h-2z"/></svg></button>
+        <button id="b-last" title="End (End)"><svg viewBox="0 0 16 16"><path d="M3 3v10l7-5zM11 3h2v10h-2z"/></svg></button>
+      </div>
+      <input id="scrub" type="range" min="0" value="0" aria-label="Position in trace">
+      <span id="counter">0 / 0</span>
+      <label class="speed" title="Playback speed">speed
+        <input id="speed" type="range" min="0.25" max="4" step="0.25" value="1">
+      </label>
+      <label class="toggle" title="Skip the dynamic loader and syscalls that are not drawn">
+        <input id="focus" type="checkbox" checked> focus
+      </label>
+    </header>
+
+    <div id="main">
+      <div id="stage-wrap">
+        <div id="stage">
+          <svg id="wires" aria-hidden="true">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,1 L9,5 L0,9 z" fill="context-stroke"></path>
+              </marker>
+            </defs>
+            <g id="wire-layer"></g>
+            <g id="packet-layer"></g>
+          </svg>
+          <div class="col" id="col-procs">
+            <h3>Processes <small>user space · fd tables</small></h3>
+            <div class="list"></div>
+          </div>
+          <div class="col kernel" id="col-ofds">
+            <h3>Open file descriptions <small>kernel</small></h3>
+            <div class="list"></div>
+          </div>
+          <div class="col kernel" id="col-nodes">
+            <h3>Files &amp; pipes <small>kernel</small></h3>
+            <div class="list"></div>
+          </div>
+          <div id="ghosts"></div>
+        </div>
+      </div>
+
+      <aside id="side">
+        <div id="now">
+          <div class="now-head">
+            <span id="now-pid" class="pid-chip"></span>
+            <span id="now-step"></span>
+          </div>
+          <div id="now-call"></div>
+          <div id="now-ret"></div>
+          <p id="now-desc"></p>
+        </div>
+        <div id="timeline-head">
+          <span>Timeline</span>
+          <button id="b-main" class="ghost small" title="Jump to the first syscall of main()">jump to main()</button>
+        </div>
+        <ol id="timeline"></ol>
+      </aside>
+    </div>
+  </section>
+
+  <script src="js/model.js"></script>
+  <script src="js/view.js"></script>
 </body>
 </html>
