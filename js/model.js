@@ -278,6 +278,12 @@
     p.bin = basename(path);
     const closed = [];
     for (const fd in p.fds) if (p.fds[fd].cloexec) { closed.push(fd); this.closeFd(p, fd); }
+    // fds that survive the exec existed before it (except for the very first
+    // exec, the one of the traced program itself)
+    if (ev.i > 0) {
+      p.execd = true;
+      for (const fd in p.fds) p.fds[fd].preExec = true;
+    }
     ctx.desc = 'Replaces the program of process ' + p.pid + ' by ' + path + '. Code and memory are replaced, the fd table is kept'
       + (closed.length ? ' except close-on-exec fds (' + closed.join(', ') + ') which are closed.' : '.');
     ctx.fx.push({ type: 'exec', pid: p.pid });
@@ -457,7 +463,7 @@
     // the child may already be known if its first syscalls appeared earlier
     const existing = this.S.procs[child];
     const c = this.S.procs[child] = {
-      pid: child, ppid: p.pid, bin: p.bin, argv: p.argv.slice(), status: 'running', code: null,
+      pid: child, ppid: p.pid, bin: p.bin, argv: p.argv.slice(), status: 'running', code: null, execd: !!p.execd,
       fds: {}, order: existing ? existing.order : this.order++
     };
     for (const fd in p.fds) c.fds[fd] = Object.assign({}, p.fds[fd]);
@@ -486,6 +492,25 @@
     ctx.desc = 'Sends ' + ev.args[ev.name === 'tgkill' ? 2 : 1] + ' to process ' + ev.args[ev.name === 'tgkill' ? 1 : 0] + '.';
   };
 
+  // syscalls whose arguments at these positions are file descriptors
+  const FD_ARGS = {};
+  ['read', 'write', 'pread64', 'pwrite64', 'readv', 'writev', 'preadv', 'pwritev', 'preadv2', 'pwritev2',
+    'close', 'lseek', '_llseek', 'fstat', 'fstat64', 'fstatfs', 'ioctl', 'fcntl', 'fcntl64', 'dup', 'dup2', 'dup3',
+    'getdents', 'getdents64', 'fsync', 'fdatasync', 'ftruncate', 'fadvise64', 'fchmod', 'fchown', 'flock',
+    'recvfrom', 'sendto', 'recvmsg', 'sendmsg', 'shutdown', 'newfstatat', 'statx'].forEach(n => (FD_ARGS[n] = [0]));
+  ['sendfile', 'sendfile64'].forEach(n => (FD_ARGS[n] = [0, 1]));
+  ['splice', 'copy_file_range'].forEach(n => (FD_ARGS[n] = [0, 2]));
+  FD_ARGS.mmap = FD_ARGS.mmap2 = [4];
+
+  // true when ev, run after an exec, uses an fd inherited across that exec
+  function usesPreExecFd(ev, p) {
+    if (ev.kind !== 'syscall' || !FD_ARGS[ev.name]) return false;
+    return FD_ARGS[ev.name].some(k => {
+      const fd = /^\d+$/.test(ev.args[k] || '') ? +ev.args[k] : NaN;
+      return !isNaN(fd) && p.fds[fd] && p.fds[fd].preExec;
+    });
+  }
+
   // names of syscalls shown in "focus" mode even when they fail
   const RELEVANT = new Set(Object.keys(H));
 
@@ -503,6 +528,9 @@
       const p = sim.proc(ev.pid);
       let changed = !known;
       let relevant = true;
+      // syscall run after an exec (other than the one of the traced program)
+      // that does not touch a fd inherited across that exec
+      const postExec = ev.kind === 'syscall' && !!p.execd && !usesPreExecFd(ev, p);
 
       if (ev.kind === 'syscall') {
         // failed execve() calls are usually the PATH search of execvp()
@@ -530,7 +558,7 @@
       }
       if (changed) { sim.gc(); snap = JSON.parse(JSON.stringify(sim.S)); }
       last[p.pid] = ev.i;
-      steps.push({ ev, pid: p.pid, state: snap, last: Object.assign({}, last), desc: ctx.desc, fx: ctx.fx, hot: ctx.hot, dir: ctx.dir, relevant });
+      steps.push({ ev, pid: p.pid, state: snap, last: Object.assign({}, last), desc: ctx.desc, fx: ctx.fx, hot: ctx.hot, dir: ctx.dir, relevant, postExec });
     }
 
     // first step of the program itself (after the dynamic loader)

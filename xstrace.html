@@ -55,6 +55,9 @@
       <label class="toggle" title="Skip the dynamic loader and syscalls that are not drawn">
         <input id="focus" type="checkbox" checked> focus
       </label>
+      <label class="toggle" title="After an exec, only stop on syscalls that use a file descriptor opened before the exec">
+        <input id="skip-post-exec" type="checkbox"> skip post exec
+      </label>
     </header>
 
     <div id="main">

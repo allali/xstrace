@@ -32,6 +32,7 @@
   const wires = new Map(); // key -> svg path
   let wireLoop = 0;
   let packetRun = 0;
+  let sel = null;          // selected fd: { pid, fd } (clicked in a fd table)
 
   const stage = $('#stage');
   const lists = { procs: $('#col-procs .list'), ofds: $('#col-ofds .list'), nodes: $('#col-nodes .list') };
@@ -54,6 +55,7 @@
   function setText(el, t) { if (el.textContent !== String(t)) el.textContent = t; }
   const speed = () => +$('#speed').value;
   const focusOn = () => $('#focus').checked;
+  const skipPostExecOn = () => $('#skip-post-exec').checked;
   function colorOf(pid) {
     const i = pidColor[pid] || 0;
     return 'hsl(' + ((218 + i * 137) % 360) + ' 62% 50%)';
@@ -72,6 +74,7 @@
     T = M.simulate(events);
     T.name = name;
     pidColor = {};
+    sel = null;
     events.forEach(e => { if (!(e.pid in pidColor)) pidColor[e.pid] = Object.keys(pidColor).length; });
 
     // reset the stage
@@ -109,6 +112,7 @@
 
   function shown(i) {
     const s = T.steps[i];
+    if (skipPostExecOn() && s.postExec) return false;
     return !focusOn() || (s.relevant && !s.loader);
   }
   function firstIdx() { return focusOn() ? Math.max(0, T.mainStart - 1) : 0; }
@@ -192,7 +196,7 @@
       g.querySelectorAll('[data-key]').forEach(x => x.removeAttribute('data-key'));
       const pc = getComputedStyle(el).getPropertyValue('--pc');
       if (pc) g.style.setProperty('--pc', pc);
-      g.classList.remove('enter', 'hot');
+      g.classList.remove('enter', 'hot', 'sel', 'sel-main');
       g.classList.add('ghost-out');
       Object.assign(g.style, { left: r.left - s.left + 'px', top: r.top - s.top + 'px', width: r.width + 'px', height: r.height + 'px', transform: '' });
       $('#ghosts').appendChild(g);
@@ -310,19 +314,11 @@
     });
   }
 
-  // order kernel objects by first use, to limit wire crossings
+  // kernel objects keep a fixed order: creation order (ids come from a single
+  // increasing counter, and pipe() creates the read end before the write end)
   function kernelOrder(S) {
-    const ofds = [], nodes = [], seenO = new Set(), seenN = new Set();
-    Object.values(S.procs).sort((a, b) => a.order - b.order).forEach(p => {
-      Object.keys(p.fds).map(Number).sort((a, b) => a - b).forEach(fd => {
-        const id = p.fds[fd].ofd;
-        if (seenO.has(id) || !S.ofds[id]) return;
-        seenO.add(id);
-        ofds.push(S.ofds[id]);
-      });
-    });
-    ofds.forEach(o => { if (!seenN.has(o.node) && S.nodes[o.node]) { seenN.add(o.node); nodes.push(S.nodes[o.node]); } });
-    return { ofds, nodes };
+    const byId = (a, b) => +a.id.slice(1) - +b.id.slice(1);
+    return { ofds: Object.values(S.ofds).sort(byId), nodes: Object.values(S.nodes).sort(byId) };
   }
 
   function renderOfds(S, st, ofds) {
@@ -366,7 +362,7 @@
         const w = h('div', 'pipe-end w', '⟶ write end'), r = h('div', 'pipe-end r', '⟵ read end');
         w.append(h('i', 'port'));
         r.append(h('i', 'port'));
-        ends.append(w, r);
+        ends.append(r, w);
         el.append(ends, tube);
       } else {
         el.append(h('i', 'port in'), h('div', 'content'));
@@ -395,6 +391,40 @@
       }
       el.classList.toggle('hot', st.hot.nodes.includes(n.id));
     });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* selection: a clicked fd and everything it leads to                  */
+  /* ------------------------------------------------------------------ */
+
+  // keys of the elements and wires associated with the selected fd: the fd,
+  // its open file description, the file / pipe, and the other fds sharing
+  // that open file description
+  function selection() {
+    const out = { els: new Set(), wires: new Set() };
+    if (!sel || !T) return out;
+    const S = T.steps[cur].state, p = S.procs[sel.pid], f = p && p.fds[sel.fd];
+    const o = f && S.ofds[f.ofd];
+    if (!o) return out;
+    out.els.add('ofd:' + o.id).add('node:' + o.node + ':' + S.nodes[o.node].kind);
+    out.wires.add('ow:' + o.id);
+    Object.values(S.procs).forEach(q => {
+      for (const fd in q.fds) if (q.fds[fd].ofd === o.id) {
+        out.els.add('fd:' + q.pid + ':' + fd);
+        out.wires.add('fw:' + q.pid + ':' + fd + ':' + o.id);
+      }
+    });
+    return out;
+  }
+
+  function applySelection() {
+    const s = selection();
+    stage.classList.toggle('has-sel', s.els.size > 0);
+    keyed().forEach(el => {
+      el.classList.toggle('sel', s.els.has(el.dataset.key));
+      el.classList.toggle('sel-main', !!sel && el.dataset.key === 'fd:' + sel.pid + ':' + sel.fd && s.els.size > 0);
+    });
+    for (const [k, p] of wires) p.classList.toggle('sel', s.wires.has(k));
   }
 
   /* ------------------------------------------------------------------ */
@@ -450,6 +480,7 @@
     const layer = $('#wire-layer');
     const st = T.steps[cur];
     const keep = new Set();
+    const selWires = selection().wires;
     for (const w of wireSpecs()) {
       keep.add(w.key);
       let d;
@@ -485,6 +516,7 @@
       p.classList.toggle('hot', !!w.hot);
       p.classList.toggle('in', !!w.hot && st.dir === 'in');
       p.classList.toggle('out', !!w.hot && st.dir === 'out');
+      p.classList.toggle('sel', selWires.has(w.key));
     }
     for (const [k, p] of wires) {
       if (keep.has(k) || p.classList.contains('leaving')) continue;
@@ -556,7 +588,7 @@
       if (i === T.mainStart && i > 0) {
         frag.append(h('li', 'sep', '▼ main() — ' + plural(T.mainStart, 'syscall') + ' of the dynamic loader above'));
       }
-      const li = h('li', (s.relevant ? '' : 'minor ') + (s.loader ? 'loader ' : '') + (s.ev.err ? 'err' : ''));
+      const li = h('li', (s.relevant ? '' : 'minor ') + (s.loader ? 'loader ' : '') + (s.postExec ? 'postexec ' : '') + (s.ev.err ? 'err' : ''));
       li.dataset.i = i;
       li.style.setProperty('--pc', colorOf(s.pid));
       li.append(h('span', 'dot'), h('span', 'txt', short(s.ev.raw, 140)));
@@ -565,6 +597,7 @@
     });
     ol.append(frag);
     ol.classList.toggle('focus', focusOn());
+    ol.classList.toggle('skip-post-exec', skipPostExecOn());
   }
 
   function renderSide(st) {
@@ -611,6 +644,7 @@
     flip(rects);
     if (!fx) { packetRun++; $('#packet-layer').innerHTML = ''; }
     pumpWires(anim ? 450 : 0);
+    applySelection();
     renderSide(st);
     if (fx) runFx(st);
   }
@@ -659,6 +693,21 @@
     $('#timeline').classList.toggle('focus', focusOn());
     if (T && !shown(cur) && cur !== firstIdx()) go(Math.max(firstIdx(), prevIdx(cur)), false);
   });
+  $('#skip-post-exec').addEventListener('change', () => {
+    $('#timeline').classList.toggle('skip-post-exec', skipPostExecOn());
+    if (T && !shown(cur) && cur !== firstIdx()) go(Math.max(firstIdx(), prevIdx(cur)), false);
+  });
+  // click on a fd: highlight what it points to (click again / Esc to clear)
+  stage.addEventListener('click', e => {
+    const row = e.target.closest('.fd[data-key]');
+    if (row) {
+      const [, pid, fd] = row.dataset.key.split(':');
+      sel = sel && sel.pid === pid && sel.fd === fd ? null : { pid, fd };
+    } else if (!e.target.closest('.card')) sel = null;
+    else return;
+    applySelection();
+  });
+
   $('#timeline').addEventListener('click', e => {
     const li = e.target.closest('li[data-i]');
     if (li) { stop(); go(+li.dataset.i, +li.dataset.i === nextIdx(cur)); }
@@ -672,6 +721,7 @@
     else if (k === 'Home') { stop(); go(firstIdx(), false); }
     else if (k === 'End') { stop(); go(lastIdx(), false); }
     else if (k === 'p' || k === 'P') play();
+    else if (k === 'Escape' && sel) { sel = null; applySelection(); }
     else return;
     e.preventDefault();
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
